@@ -1,0 +1,149 @@
+name: Cleanup Merged Branches
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    # Run weekly on Sundays at 00:00 UTC to clean up any missed branches
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup-merged-branch:
+    # Only run if PR was merged (not just closed)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    name: Delete Merged Branch
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Delete merged PR branch
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          # Fork safety: only delete branches from the same repository
+          # This prevents accidental deletion of base repo branches when
+          # a forked PR has the same branch name
+          # Skip if head.repo is null (deleted fork) or from different repo
+          if [[ -z "$HEAD_REPO" ]] || [[ "$HEAD_REPO" != "$BASE_REPO" ]]; then
+            echo "Skipping: PR is from a fork or deleted fork (HEAD_REPO=$HEAD_REPO, BASE_REPO=$BASE_REPO)"
+            exit 0
+          fi
+
+          # Validate branch name to prevent injection attacks
+          # Branch names should only contain alphanumeric, dash, underscore, slash, dot
+          if ! [[ "$BRANCH" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+            echo "Error: Invalid branch name format"
+            exit 1
+          fi
+
+          # Don't delete protected branches
+          if [[ "$BRANCH" == "main" || "$BRANCH" == "master" || "$BRANCH" == "develop" || "$BRANCH" == "staging" || "$BRANCH" == "production" ]]; then
+            echo "Skipping protected branch: $BRANCH"
+            exit 0
+          fi
+
+          # Wait briefly to allow GitHub merge state to propagate
+          sleep 5
+
+          # Only delete if branch exists remotely
+          if git ls-remote --heads origin "$BRANCH" | grep -qxF "refs/heads/$BRANCH"; then
+            echo "Deleting merged branch: $BRANCH"
+            git push origin --delete "$BRANCH" || echo "Failed to delete branch (may already be deleted)"
+          else
+            echo "Branch $BRANCH does not exist remotely"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+
+      - name: Cleanup old merged branches (scheduled run)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          echo "Fetching all branches..."
+          git fetch --all --prune
+
+          # Get default branch (use awk to reliably get last field regardless of spacing)
+          DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+
+          # Validate default branch was found
+          if [[ -z "$DEFAULT_BRANCH" ]]; then
+            echo "Error: Could not determine default branch, aborting to prevent accidental deletions"
+            exit 1
+          fi
+          echo "Default branch: $DEFAULT_BRANCH"
+
+          # Get all merged branches (one per line, properly handling spaces)
+          # Using process substitution to avoid subshell issues with while loop
+          FOUND_BRANCHES=0
+          while IFS= read -r LINE; do
+            # Skip empty lines
+            [[ -z "$LINE" ]] && continue
+
+            # Extract branch name (remove 'origin/' prefix and leading/trailing whitespace)
+            BRANCH=$(echo "$LINE" | sed 's/^[[:space:]]*origin\///' | sed 's/[[:space:]]*$//')
+
+            # Skip empty results
+            [[ -z "$BRANCH" ]] && continue
+
+            # Skip protected branches
+            case "$BRANCH" in
+              HEAD|main|master|develop|staging|production|"$DEFAULT_BRANCH")
+                continue
+                ;;
+            esac
+
+            # Validate branch name format for safety
+            if ! [[ "$BRANCH" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+              echo "Skipping invalid branch name format: $BRANCH"
+              continue
+            fi
+
+            FOUND_BRANCHES=1
+            echo "Checking branch: $BRANCH"
+
+            # Verify branch still exists on remote before processing
+            if ! git ls-remote --heads origin "$BRANCH" | grep -qxF "refs/heads/$BRANCH"; then
+              echo "Skipping: branch $BRANCH no longer exists on remote"
+              continue
+            fi
+
+            # Additional safety check - only delete branches merged more than 7 days ago
+            # CRITICAL: If git log fails, skip the branch to avoid accidental deletion
+            if ! LAST_COMMIT_DATE=$(git log -1 --format=%ct "origin/$BRANCH"); then
+              echo "Warning: Failed to get commit date for $BRANCH, skipping to prevent accidental deletion"
+              continue
+            fi
+
+            # Validate that we got a valid timestamp (non-empty, numeric)
+            if [[ -z "$LAST_COMMIT_DATE" ]] || ! [[ "$LAST_COMMIT_DATE" =~ ^[0-9]+$ ]]; then
+              echo "Warning: Invalid commit date for $BRANCH, skipping to prevent accidental deletion"
+              continue
+            fi
+
+            CURRENT_DATE=$(date +%s)
+            DAYS_OLD=$(( (CURRENT_DATE - LAST_COMMIT_DATE) / 86400 ))
+
+            if [ "$DAYS_OLD" -gt 7 ]; then
+              echo "Deleting branch: $BRANCH (merged $DAYS_OLD days ago)"
+              git push origin --delete "$BRANCH" || echo "Failed to delete $BRANCH (may already be deleted)"
+            else
+              echo "Skipping recent branch: $BRANCH (merged $DAYS_OLD days ago)"
+            fi
+          done < <(git branch -r --merged "origin/$DEFAULT_BRANCH" 2>/dev/null)
+
+          if [ "$FOUND_BRANCHES" -eq 0 ]; then
+            echo "No merged branches to clean up"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

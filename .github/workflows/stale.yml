@@ -1,0 +1,107 @@
+name: Manage Stale PRs and Issues
+
+on:
+  schedule:
+    # Runs at 00:00 UTC every day
+    - cron: '0 0 * * *'
+  # Allow manual triggering
+  workflow_dispatch:
+
+# Prevent concurrent runs of this workflow
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale-prs:
+    runs-on: ubuntu-latest
+    name: Close Stale Pull Requests
+    steps:
+      - name: Manage Stale PRs
+        uses: actions/stale@28ca1036281a5e5922ead5184a1bbf96e5fc984e # v9
+        with:
+          # Only target pull requests in this job
+          only: 'prs'
+          
+          # PR-specific messages
+          stale-pr-message: >
+            This pull request has been inactive for 30 days and is marked as stale.
+            It will be automatically closed in 15 days if no further activity occurs.
+            
+            If you plan to continue working on this PR, please comment or push new commits.
+            You can also add the `keep-open` label to prevent it from being marked as stale.
+          
+          close-pr-message: >
+            This pull request is being closed due to 45 days of inactivity.
+            If you would like to continue working on this, please reopen the PR or create a new one.
+            
+            Thank you for your contribution!
+          
+          # Industry best practice: 30 days inactive → stale, 45 days → close
+          days-before-stale: 30
+          days-before-close: 15  # 15 additional days after stale = 45 total
+          
+          # Label to mark stale PRs
+          stale-pr-label: 'stale'
+          
+          # Exempt labels - PRs with these labels won't be marked stale
+          exempt-pr-labels: 'keep-open,blocked,do-not-close,dependencies'
+          
+          # Draft PRs get longer grace period (configurable, but honored via labels)
+          exempt-draft-pr: true
+          
+          # Limit operations to avoid API rate limits
+          operations-per-run: 100
+          
+          # Use the default GitHub token
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Remove stale label when PR becomes active again
+          remove-stale-when-updated: true
+
+  stale-issues:
+    runs-on: ubuntu-latest
+    name: Close Stale Issues
+    steps:
+      - name: Manage Stale Issues
+        uses: actions/stale@28ca1036281a5e5922ead5184a1bbf96e5fc984e # v9
+        with:
+          # Only target issues in this job
+          only: 'issues'
+          
+          # Issue-specific messages
+          stale-issue-message: >
+            This issue has been inactive for 60 days and is marked as stale.
+            It will be automatically closed in 30 days if no further activity occurs.
+            
+            If this issue is still relevant, please comment to keep it open.
+            You can also add the `keep-open` label to prevent it from being marked as stale.
+          
+          close-issue-message: >
+            This issue is being closed due to 90 days of inactivity.
+            If this issue is still relevant, please reopen it or create a new issue.
+            
+            Thank you for your contribution!
+          
+          # Industry best practice: 60 days inactive → stale, 90 days → close
+          days-before-stale: 60
+          days-before-close: 30  # 30 additional days after stale = 90 total
+          
+          # Label to mark stale issues
+          stale-issue-label: 'stale'
+          
+          # Exempt labels - Issues with these labels won't be marked stale
+          exempt-issue-labels: 'keep-open,bug,security,blocked,feature-request,enhancement'
+          
+          # Limit operations to avoid API rate limits
+          operations-per-run: 100
+          
+          # Use the default GitHub token
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          
+          # Remove stale label when issue becomes active again
+          remove-stale-when-updated: true
