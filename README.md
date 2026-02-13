@@ -1,6 +1,6 @@
-# Alphavaults
+# Alpha Vaults
 
-Alphavaults is a production-grade ERC-4626 index vault on Hyperliquid (HyperEVM + HyperCore) that batches deposits and withdrawals across HyperEVM ERC4626 protocols and HyperCore perps/vaults with a fixed composition registry.
+Alpha Vaults is a production-grade ERC-4626 index vault on Hyperliquid (HyperEVM + HyperCore) that batches deposits and withdrawals across HyperEVM ERC4626 protocols and HyperCore perps/vaults with a fixed composition registry.
 
 ## 🏗️ Architecture
 
